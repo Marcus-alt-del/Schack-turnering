@@ -1,0 +1,329 @@
+import streamlit as st
+import pandas as pd
+import uuid
+
+# --- KONFIGURATION & DESIGN ---
+st.set_page_config(page_title="Tournament Hub Pro", page_icon="🏆", layout="wide")
+
+st.markdown("""
+<style>
+    .match-card {
+        background-color: #1e1e1e; padding: 20px; border-radius: 15px;
+        border-left: 6px solid #cc0000; margin-bottom: 20px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+    }
+    .score-box {
+        background: #cc0000; color: white; padding: 8px 20px; border-radius: 8px;
+        font-size: 32px; font-weight: bold; font-family: monospace;
+        min-width: 100px; text-align: center;
+    }
+    .stButton>button { width: 100%; border-radius: 5px; }
+    .status-banner {
+        background-color: #cc0000; color: white; padding: 10px; border-radius: 10px;
+        text-align: center; font-weight: bold; margin-bottom: 20px; font-size: 20px;
+    }
+    .medal-card {
+        background: #262626; padding: 15px; border-radius: 10px; text-align: center;
+        border: 1px solid #444; margin-bottom: 10px;
+    }
+    .stat-box {
+        background: #333; padding: 15px; border-radius: 10px; text-align: center; border-top: 4px solid #cc0000;
+        margin-bottom: 10px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- MINNE (SESSION STATE) ---
+if 'spelare' not in st.session_state:
+    st.session_state.spelare = ["Erik", "Anna", "Karl", "Ella", "David", "Johan"]
+if 'turnerings_logg' not in st.session_state:
+    st.session_state.turnerings_logg = {}
+if 'nuvarande_turnering_nr' not in st.session_state:
+    st.session_state.nuvarande_turnering_nr = 1
+if 'vinster' not in st.session_state:
+    st.session_state.vinster = {s: 0 for s in st.session_state.spelare}
+if 'live_matcher' not in st.session_state:
+    st.session_state.live_matcher = []
+if 'grupper' not in st.session_state:
+    st.session_state.grupper = []
+
+def get_clean_name(name):
+    return name.split(" (ID:")[0]
+
+def get_active_t_namn():
+    return f"Turnering {st.session_state.nuvarande_turnering_nr}"
+
+def add_p(spelare, poang, typ):
+    t_namn = get_active_t_namn()
+    if t_namn not in st.session_state.turnerings_logg:
+        st.session_state.turnerings_logg[t_namn] = []
+    st.session_state.turnerings_logg[t_namn].append({
+        "id": str(uuid.uuid4()),
+        "spelare": spelare,
+        "poäng": poang,
+        "typ": typ,
+        "t_nr": st.session_state.nuvarande_turnering_nr
+    })
+
+def remove_last_event(spelare, typ):
+    t_namn = get_active_t_namn()
+    if t_namn in st.session_state.turnerings_logg:
+        lista = st.session_state.turnerings_logg[t_namn]
+        for i in range(len(lista) - 1, -1, -1):
+            if lista[i]['spelare'] == spelare and lista[i]['typ'] == typ:
+                lista.pop(i)
+                return True
+    return False
+
+# --- NAVIGERING ---
+st.sidebar.title(f"🏆 {get_active_t_namn()}")
+val = st.sidebar.radio("Meny:", ["🎮 Matchcenter (LIVE)", "🌍 Topplista", "📊 Spelarstatistik", "🎖️ Hall of Fame", "⚙️ Admin", "👤 Spelare"])
+
+# --- 1. MATCHCENTER ---
+if val == "🎮 Matchcenter (LIVE)":
+    st.title("🎮 Live Scoreboard")
+    if st.session_state.grupper:
+        for g in st.session_state.grupper:
+            with st.expander(f"📊 {g['namn']}", expanded=True):
+                rows = [{"Spelare": get_clean_name(k), "Poäng": v} for k, v in g['deltagare'].items()]
+                df = pd.DataFrame(rows).sort_values(by="Poäng", ascending=False).reset_index(drop=True)
+                df.index += 1
+                st.table(df)
+   
+    for m in st.session_state.live_matcher:
+        st.markdown(f"""<div class="match-card"><p style="text-align: center; color: #aaa;">{m['omgang']}</p>
+        <div style="display: flex; align-items: center; justify-content: center;">
+        <div style="flex: 1; text-align: right; padding-right: 20px; font-size: 20px;">{get_clean_name(m['p1'])}</div>
+        <div class="score-box">{m['res1']} - {m['res2']}</div>
+        <div style="flex: 1; text-align: left; padding-left: 20px; font-size: 20px;">{get_clean_name(m['p2'])}</div>
+        </div></div>""", unsafe_allow_html=True)
+
+# --- 2. TOPPLISTA ---
+elif val == "🌍 Topplista":
+    st.title("🌍 Global Ranking (3 senaste)")
+    nu = st.session_state.nuvarande_turnering_nr
+    aktiva_t = [f"Turnering {i}" for i in range(max(1, nu-2), nu+1)]
+    score_data = []
+    for s in st.session_state.spelare:
+        total = sum(h['poäng'] for t in aktiva_t if t in st.session_state.turnerings_logg for h in st.session_state.turnerings_logg[t] if h['spelare'] == s)
+        score_data.append({"Spelare": s, "Poäng": total})
+    st.table(pd.DataFrame(score_data).sort_values(by="Poäng", ascending=False).reset_index(drop=True))
+
+# --- 3. SPELARSTATISTIK ---
+elif val == "📊 Spelarstatistik":
+    st.title("📊 Spelarprofiler")
+    valda_spelare = st.selectbox("Välj spelare:", st.session_state.spelare)
+   
+    alla_handelser = []
+    for t_namn, logg in st.session_state.turnerings_logg.items():
+        for h in logg:
+            if h['spelare'] == valda_spelare:
+                h_copy = h.copy()
+                h_copy['Turnering'] = t_namn
+                alla_handelser.append(h_copy)
+   
+    total_p = sum(h['poäng'] for h in alla_handelser)
+    unika_t = set(h['Turnering'] for h in alla_handelser)
+    antal_t = max(1, len(unika_t)) if alla_handelser else 0
+    snitt = total_p / antal_t if antal_t > 0 else 0
+    match_vinster = sum(1 for h in alla_handelser if h['typ'] == "Vinst Match")
+    remier = sum(1 for h in alla_handelser if h['typ'] == "Remi")
+    medaljer = st.session_state.vinster.get(valda_spelare, 0)
+
+    c1, c2, c3 = st.columns(3)
+    with c1: st.markdown(f'<div class="stat-box">Totalpoäng<br><h2>{total_p}</h2></div>', unsafe_allow_html=True)
+    with c2: st.markdown(f'<div class="stat-box">Turneringar<br><h2>{antal_t}</h2></div>', unsafe_allow_html=True)
+    with c3: st.markdown(f'<div class="stat-box">Snittpoäng/Turnering<br><h2>{snitt:.1f}</h2></div>', unsafe_allow_html=True)
+
+    c4, c5, c6 = st.columns(3)
+    with c4: st.markdown(f'<div class="stat-box">Matchvinster<br><h2>{match_vinster} ✅</h2></div>', unsafe_allow_html=True)
+    with c5: st.markdown(f'<div class="stat-box">Remier<br><h2>{remier} 🤝</h2></div>', unsafe_allow_html=True)
+    with c6: st.markdown(f'<div class="stat-box">Hall of Fame<br><h2>{medaljer}🏆</h2></div>', unsafe_allow_html=True)
+
+    st.subheader("🏆 Turneringshistorik (Bästa resultat)")
+    if alla_handelser:
+        priority = {"Vinnare": 10, "Final": 9, "Semi": 8, "Kvart": 7, "Åttondel": 6, "Deltog": 1}
+        visnings_data = {}
+        for h in alla_handelser:
+            t = h['Turnering']
+            prio = priority.get(h['typ'], 0)
+            if prio > 0:
+                if t not in visnings_data or prio > visnings_data[t]["Prio"]:
+                    visnings_data[t] = {"Turnering": t, "Händelse": h['typ'], "Prio": prio}
+       
+        final_list = list(visnings_data.values())
+        if final_list:
+            st.dataframe(pd.DataFrame(final_list)[['Turnering', 'Händelse']], use_container_width=True, hide_index=True)
+
+# --- 4. HALL OF FAME ---
+elif val == "🎖️ Hall of Fame":
+    st.title("🎖️ Hall of Fame")
+    m_data = [{"Namn": k, "Vinster": v} for k, v in st.session_state.vinster.items() if v > 0]
+    if m_data:
+        df = pd.DataFrame(m_data).sort_values(by="Vinster", ascending=False).reset_index(drop=True)
+        for i, row in df.iterrows():
+            if i == 0: medal, color, label = "🥇", "#ffd700", "GULD"
+            elif i == 1: medal, color, label = "🥈", "#c0c0c0", "SILVER"
+            elif i == 2: medal, color, label = "🥉", "#cd7f32", "BRONS"
+            else: medal, color, label = "🏅", "#ffffff", f"{i+1}:a plats"
+            st.markdown(f"""<div class="medal-card"><div style="display: flex; justify-content: space-between; align-items: center;"><span style="font-size: 40px;">{medal}</span><div style="flex-grow: 1; margin-left: 20px; text-align: left;"><span style="color: {color}; font-size: 14px; font-weight: bold;">{label}</span><br><span style="font-size: 24px; font-weight: bold;">{row['Namn']}</span></div><div style="text-align: right;"><span style="font-size: 24px; font-weight: bold;">{row['Vinster']}</span><br><span style="font-size: 12px; color: #888;">VINSTER</span></div></div></div>""", unsafe_allow_html=True)
+
+# --- 5. ADMIN ---
+elif val == "⚙️ Admin":
+    st.title("⚙️ Kontrollpanel")
+    st.markdown(f'<div class="status-banner">AKTIV: {get_active_t_namn().upper()}</div>', unsafe_allow_html=True)
+    tabs = st.tabs(["🆕 Skapa", "🔴 Live", "📈 Poäng", "🧹 Städa Logg", "🏆 Medaljer", "🔄 Turnering"])
+   
+    with tabs[0]: # 🆕 SKAPA
+        cA, cB = st.columns(2)
+        with cA:
+            st.subheader("Skapa Grupp")
+            gn = st.text_input("Gruppnamn (t.ex. Grupp A)")
+            gm = st.multiselect("Välj spelare till gruppen", st.session_state.spelare)
+            if st.button("Starta Grupp"):
+                d = {p: 0 for p in gm}
+                st.session_state.grupper.append({"namn": gn, "deltagare": d})
+                st.success(f"Gruppen {gn} skapad!")
+                st.rerun()
+        with cB:
+            st.subheader("Skapa Live Match")
+            mo = st.text_input("Omgång (t.ex. Semifinal)")
+            p1_v = st.selectbox("Spelare 1", ["---"] + st.session_state.spelare, key="p1")
+            p2_v = st.selectbox("Spelare 2", ["---"] + st.session_state.spelare, key="p2")
+            if st.button("Publicera Live Match"):
+                if p1_v != "---" and p2_v != "---":
+                    st.session_state.live_matcher.append({"omgang": mo, "p1": p1_v, "p2": p2_v, "res1": 0, "res2": 0})
+                    st.success("Match publicerad!")
+                    st.rerun()
+
+    with tabs[1]: # 🔴 LIVE
+        st.subheader("Hantera Gruppresultat")
+        for i, g in enumerate(st.session_state.grupper):
+            with st.expander(f"Poäng i {g['namn']}"):
+                for p in list(g['deltagare'].keys()):
+                    c1, c2, c3 = st.columns([2,1,1])
+                    c1.write(get_clean_name(p))
+                    if c2.button("+1", key=f"gp{i}{p}"): st.session_state.grupper[i]['deltagare'][p]+=1; st.rerun()
+                    if c3.button("-1", key=f"gm{i}{p}"): st.session_state.grupper[i]['deltagare'][p]-=1; st.rerun()
+       
+        st.divider()
+        st.subheader("Hantera Live Matcher")
+        for i, m in enumerate(st.session_state.live_matcher):
+            with st.expander(f"Resultat: {m['p1']} vs {m['p2']}"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    m['res1'] = st.number_input(f"Mål {m['p1']}", value=m['res1'], key=f"m1{i}")
+                with col2:
+                    m['res2'] = st.number_input(f"Mål {m['p2']}", value=m['res2'], key=f"m2{i}")
+                if st.button("Radera Match", key=f"del_m{i}"):
+                    st.session_state.live_matcher.pop(i); st.rerun()
+
+    with tabs[2]: # 📈 POÄNG
+        v_s = st.selectbox("Välj spelare för poäng", st.session_state.spelare)
+        def p_row(label, val, typ):
+            c1, c2, c3 = st.columns([3, 1, 1])
+            c1.write(f"**{label}** ({val}p)")
+            if c2.button("Ge", key=f"add_{typ}_{v_s}"): add_p(v_s, val, typ); st.rerun()
+            if c3.button("Ta bort", key=f"sub_{typ}_{v_s}"): remove_last_event(v_s, typ); st.rerun()
+       
+        p_row("🎟️ Deltog", 5, "Deltog")
+        p_row("⅛ Åttondel", 1, "Åttondel")
+        p_row("¼ Kvart", 1, "Kvart")
+        p_row("½ Semi", 1, "Semi")
+        p_row("🥈 Final", 2, "Final")
+        p_row("🏆 Vinnare", 2, "Vinnare")
+        st.divider()
+        p_row("✅ Vinst Match", 2, "Vinst Match")
+        p_row("🤝 Remi", 1, "Remi")
+
+    with tabs[3]: # 🧹 STÄDA LOGG
+        s_val = st.selectbox("Välj spelare att städa för:", st.session_state.spelare, key="clean_sel")
+        for t_n, logg in st.session_state.turnerings_logg.items():
+            for i, rad in enumerate(list(logg)):
+                if rad['spelare'] == s_val:
+                    r_id = rad.get('id', f"old_{i}")
+                    c1, c2 = st.columns([4, 1])
+                    c1.write(f"**{t_n}**: {rad['typ']} ({rad['poäng']}p)")
+                    if c2.button("Radera", key=f"admin_del_{r_id}_{t_n}"):
+                        st.session_state.turnerings_logg[t_n].pop(i); st.rerun()
+
+    with tabs[4]: # 🏆 MEDALJER
+        st.subheader("Hantera Bucklor")
+        for s in st.session_state.spelare:
+            c1, c2, c3 = st.columns([2, 1, 1])
+            c1.write(f"**{s}** ({st.session_state.vinster.get(s, 0)}🏆)")
+            if c2.button("🏆 Ge Buckla", key=f"give_v_{s}"):
+                st.session_state.vinster[s] += 1; st.rerun()
+            if c3.button("❌ Ta bort", key=f"take_v_{s}"):
+                st.session_state.vinster[s] = max(0, st.session_state.vinster[s]-1); st.rerun()
+
+    with tabs[5]: # 🔄 TURNERING
+        st.subheader("Hantera turneringsnummer")
+        st.write(f"Just nu är ni på: **Turnering {st.session_state.nuvarande_turnering_nr}**")
+        
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("🚀 GÅ TILL NÄSTA TURNERING"):
+                st.session_state.nuvarande_turnering_nr += 1
+                # Rensar live-vyn men behåller loggen
+                st.session_state.live_matcher = []
+                st.session_state.grupper = []
+                st.rerun()
+        
+        with c2:
+            if st.session_state.nuvarande_turnering_nr > 1:
+                if st.button("⏪ BACKA TILL FÖREGÅENDE"):
+                    st.session_state.nuvarande_turnering_nr -= 1
+                    st.rerun()
+            else:
+                st.button("⏪ BACKA (Låst)", disabled=True, help="Du är redan på Turnering 1")
+
+# --- 6. SPELARE ---
+elif val == "👤 Spelare":
+    st.title("👤 Register")
+    ns = st.text_input("Namn på ny spelare")
+    if st.button("Spara"):
+        if ns and ns not in st.session_state.spelare:
+            st.session_state.spelare.append(ns)
+            st.session_state.vinster[ns] = 0
+            st.rerun()
+    st.divider()
+    for s in st.session_state.spelare:
+        c1, c2 = st.columns([4,1])
+        c1.write(s)
+        if c2.button("Radera Spelare", key=f"del{s}"): st.session_state.spelare.remove(s); st.rerun()# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo Hello, world!
+
+      # Runs a set of commands using the runners shell
+      - name: Run a multi-line script
+        run: |
+          echo Add other actions to build,
+          echo test, and deploy your project.
